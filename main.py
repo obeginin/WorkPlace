@@ -18,6 +18,13 @@ async def lifestile_task(logger: logging.Logger, interval: int = 300):
         logger.info("Service lifestile: running OK")
         await asyncio.sleep(interval)
 
+async def test_ClassHttp(logger: logging.Logger):
+    """Проверка экземпляра класса AsyncHttpClient"""
+    response = await async_test_http(logger=logger)
+    #response = await async_tests_http(logger=logger)
+    logger.info(f"data {response}")
+    return response
+
 async def main():
     # инициализируем основное логирование
     logger_config = LoggerConfig(log_file='app.log', log_level="INFO",console_output=True, use_json=False)
@@ -29,9 +36,8 @@ async def main():
     # Основная программа
 
     for i in range (1,2):
-        #response = await async_test_http(logger=logger)
-        response = await async_tests_http(logger=logger)
-        logger.info(f"data {response}")
+        result = await test_ClassHttp(logger=logger)
+        logger.info(f"data {result}")
         logger.info(f"Спим {i} секунд!")
         await asyncio.sleep(i)
 

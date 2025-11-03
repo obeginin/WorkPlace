@@ -5,7 +5,49 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal
 from json import JSONDecodeError
-from aiohttp import ContentTypeError
+import socket
+
+@dataclass
+class ErrorInfo:
+    """Структура результата обработки ошибки"""
+    message: str
+    type: str
+    level: str  # info | warning | error | critical
+    context: str | None = None
+
+
+class ErrorHandler:
+    """Централизованная обработка ошибок и формирование сообщений."""
+    def __init__(self, logger: logging.Logger | None = None):
+        self.logger = logger
+
+    async def handle(self, e: Exception, context: str = "") -> ErrorInfo:
+        """Главный метод обработки ошибок"""
+        # --- Классификация по типу ---
+        if isinstance(e, asyncio.TimeoutError): info = ErrorInfo("Сервер не ответил вовремя (TimeoutError).", "TimeoutError", "warning", context)
+        elif isinstance(e, aiohttp.ClientConnectorError): info = ErrorInfo("Ошибка подключения к серверу (ClientConnectorError).", "ClientConnectorError", "error", context)
+        elif isinstance(e, aiohttp.ClientResponseError): info = ErrorInfo(f"Ошибка HTTP-ответа: {e.status} {e.message}", "ClientResponseError", "error", context)
+        elif isinstance(e, aiohttp.ClientPayloadError): info = ErrorInfo("Ошибка чтения тела ответа (ClientPayloadError).", "ClientPayloadError", "error", context)
+        elif isinstance(e, aiohttp.ClientError): info = ErrorInfo(f"Ошибка клиента aiohttp: {e}", "ClientError", "error", context)
+        elif isinstance(e, JSONDecodeError): info = ErrorInfo("Ошибка декодирования JSON-ответа.", "JSONDecodeError", "error", context)
+        elif isinstance(e, UnicodeDecodeError): info = ErrorInfo("Ошибка декодирования текста (UnicodeDecodeError).", "UnicodeDecodeError", "error", context)
+        elif isinstance(e, ValueError): info = ErrorInfo(f"Некорректное значение: {e}", "ValueError", "warning", context)
+        elif isinstance(e, OSError): info = ErrorInfo(f"Системная ошибка ввода-вывода: {e}", "OSError", "error", context)
+        elif isinstance(e, socket.gaierror): info = ErrorInfo("Ошибка DNS или сети (gaierror).", "SocketError", "error", context)
+        elif isinstance(e, AssertionError): info = ErrorInfo(f"Ошибка проверки данных (AssertionError): {e}", "AssertionError", "error", context)
+        elif isinstance(e, KeyboardInterrupt): info = ErrorInfo("Процесс прерван пользователем.", "KeyboardInterrupt", "critical", context)
+        else: info = ErrorInfo(f"Непредвиденная ошибка: {type(e).__name__} — {e}", "UnexpectedError", "error", context)
+
+        # --- Логирование ---
+        log_message = f"[{info.context}] {info.message}" if info.context else info.message
+
+        match info.level:
+            case "info": self.logger.info(log_message)
+            case "warning": self.logger.warning(log_message)
+            case "error": self.logger.error(log_message)
+            case "critical": self.logger.critical(log_message)
+
+        return info
 
 # Формат запроса
 @dataclass
@@ -76,8 +118,8 @@ class AsyncHttpClient:
     def __init__(
         self,
         url: str = "",
-        timeout: float = 10.0,
-        max_retries: int = 3,
+        timeout: float = 3.0,
+        max_retries: int = 2,
         headers: dict[str, str] | None = None,
         limit: int = 100,
         limit_per_host: int = 10,
@@ -96,6 +138,8 @@ class AsyncHttpClient:
             ssl=verify_ssl,                     # проверять ли SSL-сертификаты
         )
         self.session: aiohttp.ClientSession | None = None
+        self.logger = logging.getLogger(__name__)
+        self.error_handler = ErrorHandler(self.logger)
 
     """
     Преимущественнее КМ
@@ -145,6 +189,8 @@ class AsyncHttpClient:
         start_time = time.perf_counter()
         for attempt in range(self.max_retries + 1):
             try:
+                self.logger.info(f"Request attempt {attempt + 1}: {request.method} {url} | params={request.params} json={request.json} data={request.data}")
+
                 async with self.session.request(
                         method=request.method,
                         url=url,
@@ -167,21 +213,30 @@ class AsyncHttpClient:
                     else:
                         error = f"Unsupported return_type: {request.return_type}"
                         end_time = time.perf_counter() - start_time
+                        self.logger.error(f"Unsupported return_type in request: {request}")
                         return ResponseFormat(status=None, data=None,url=url, error=error, execute_time=end_time, used_attempts=attempt)
                     # если успешный ответ или ошибка return_type, выходим
+                    self.logger.info(f"Response received: status={status} content_type={type(content)}")
                     break
 
-            except asyncio.TimeoutError:
-                error = f"TimeoutError (attempt {attempt + 1})"
-            except aiohttp.ClientError as e:
-                error = f"ClientError: {e}"
+
             except Exception as e:
-                error = f"UnexpectedError: {e}"
+                if self.error_handler:
+                    err_info = await self.error_handler.handle(e, context=f"{request.method} {url}")
+                    error = err_info.message
+                else:
+                    error = str(e)
+                    #self.logger.warning(f"Attempt {attempt + 1} failed for {request.method} {url}: {error}")
 
             if attempt < self.max_retries:
                 await asyncio.sleep(2 ** attempt)
 
         end_time = time.perf_counter() - start_time
+        if error:
+            self.logger.error(f"Request failed after {attempt + 1} attempts: {request.method} {url} | Error: {error}")
+        else:
+            self.logger.info(f"Request successful: {request.method} {url} | Attempts: {attempt + 1} | Time: {end_time:.3f}s")
+
         return ResponseFormat(
             status=status if error is None else None,
             data=content,
@@ -193,7 +248,9 @@ class AsyncHttpClient:
 
 
 
+
 async def async_test_http(logger: logging.Logger):
+    """Образец для использования"""
     payload  = {"identifier": "obeginin", "password": "111111"}
     headers = {
         "accept": "application/json",
