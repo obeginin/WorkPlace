@@ -1,5 +1,5 @@
 import logging
-
+import time
 import aiohttp
 import asyncio
 from dataclasses import dataclass, field
@@ -34,15 +34,17 @@ class ResponseFormat:
     data: Any
     url: str
     error: str | None = None
-    ok: bool = field(init=False)
+    success: bool = field(init=False)
+    execute_time: float | None = None
+    used_attempts: int = 0
 
     def __post_init__(self):
         """Автоматически определяем успешность запроса"""
-        self.ok = self.status is not None and 200 <= self.status < 300
+        self.success = self.status is not None and 200 <= self.status < 300
 
     def __repr__(self):
         """для логов"""
-        return f"<ResponseFormat status={self.status} ok={self.ok} url={self.url} data={self.data}>"
+        return f"<ResponseFormat status={self.status} success={self.success} url={self.url} data={self.data}>"
 
     @property
     def is_json(self) -> bool:
@@ -58,7 +60,14 @@ class ResponseFormat:
     def is_bytes(self) -> bool:
         """True, если data является байтами"""
         return isinstance(self.data, bytes)
-    
+
+    @property
+    def error_message(self) -> str | None:
+        """Возвращает сообщение ошибки из стандартных полей ответа"""
+        if isinstance(self.data, dict):
+            return self.data.get("message") or self.data.get("msg") or self.data.get("error")
+        return None
+
     
 # Основной класс клиента
 # ---------------------------
@@ -68,7 +77,7 @@ class AsyncHttpClient:
         self,
         url: str = "",
         timeout: float = 10.0,
-        max_retries: int = 2,
+        max_retries: int = 3,
         headers: dict[str, str] | None = None,
         limit: int = 100,
         limit_per_host: int = 10,
@@ -130,8 +139,10 @@ class AsyncHttpClient:
         await self._ensure_session()
         url = request.endpoint if request.endpoint.startswith("http") else f"{self.url}{request.endpoint}"
         merged_headers = {**self.default_headers, **(request.headers or {})}
+        status: int | None = None
         error: str | None = None  # инициализация перед циклом
-
+        content: Any = None
+        start_time = time.perf_counter()
         for attempt in range(self.max_retries + 1):
             try:
                 async with self.session.request(
@@ -140,14 +151,14 @@ class AsyncHttpClient:
                         params=request.params,
                         data=request.data,
                         json=request.json,
-                        headers=merged_headers
+                        headers=merged_headers,
                 ) as response:
                     status = response.status
 
                     if request.return_type == "json":
                         try:
                             content = await response.json(content_type=None)
-                        except (ContentTypeError, JSONDecodeError):
+                        except (aiohttp.ContentTypeError, JSONDecodeError):
                             content = await response.text()
                     elif request.return_type == "text":
                         content = await response.text()
@@ -155,9 +166,10 @@ class AsyncHttpClient:
                         content = await response.read()
                     else:
                         error = f"Unsupported return_type: {request.return_type}"
-                        return ResponseFormat(status=None, data=None, url=url, error=error)
-
-                    return ResponseFormat(status=status, data=content, url=str(response.url))
+                        end_time = time.perf_counter() - start_time
+                        return ResponseFormat(status=None, data=None,url=url, error=error, execute_time=end_time, used_attempts=attempt)
+                    # если успешный ответ или ошибка return_type, выходим
+                    break
 
             except asyncio.TimeoutError:
                 error = f"TimeoutError (attempt {attempt + 1})"
@@ -169,7 +181,15 @@ class AsyncHttpClient:
             if attempt < self.max_retries:
                 await asyncio.sleep(2 ** attempt)
 
-        return ResponseFormat(status=None, data=None, url=url, error=error or "Unknown error")
+        end_time = time.perf_counter() - start_time
+        return ResponseFormat(
+            status=status if error is None else None,
+            data=content,
+            url=url,
+            error=error,
+            execute_time=end_time,
+            used_attempts=attempt,
+        )
 
 
 
@@ -203,3 +223,4 @@ async def async_tests_http(logger: logging.Logger):
         logger.info(resp_json)
         logger.info(resp_text.data[:100])
         logger.info(f"Binary length: {len((resp_bytes.data))} data: {resp_bytes.data}")
+
