@@ -19,6 +19,9 @@ env/
 .idea/
 *.iml
 *.xml
+*.json
+*.txt
+
 
 /Client/.next
 /Client/dist

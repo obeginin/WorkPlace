@@ -25,6 +25,15 @@ async def test_ClassHttp(logger: logging.Logger):
     logger.info(f"data {response}")
     return response
 
+async def test_ClassFiles():
+    '''Функция добавляем лог пачками'''
+    json_log = FileManager()
+    batch  = [{"user": "oleg", "roles": ["admin", "editor"]}]
+
+    for i in range(1000):
+        await json_log.write_json_async(file_path='json_log.json', data_list=batch, append=True, indent=None)
+        await asyncio.sleep(2)
+
 async def main():
     # инициализируем основное логирование
     logger_config = LoggerConfig(log_file='app.log', log_level="INFO",console_output=True, use_json=False)
@@ -36,13 +45,14 @@ async def main():
     # Основная программа
 
     for i in range (1,2):
-        result = await test_ClassHttp(logger=logger)
-        logger.info(f"data {result}")
+        #result = await test_ClassHttp(logger=logger)
+        await test_ClassFiles()
+        #logger.info(f"data {result}")
         logger.info(f"Спим {i} секунд!")
         await asyncio.sleep(i)
 
 
     logger.info("Основной цикл программы завершен!")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+asyncio.run(main())
