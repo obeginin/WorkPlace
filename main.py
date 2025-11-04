@@ -25,14 +25,22 @@ async def test_ClassHttp(logger: logging.Logger):
     logger.info(f"data {response}")
     return response
 
-async def test_ClassFiles():
+async def test_ClassFiles(logger: logging.Logger):
     '''Функция добавляем лог пачками'''
     json_log = FileManager()
     batch  = [{"user": "oleg", "roles": ["admin", "editor"]}]
+    file_path = r'C:\WorkPlace\files\app.log'
+    #for i in range(1):
+        #await json_log.write_json_async(file_path='json_log.json', data_list=batch, append=True, indent=None)
+        #result = json_log.read_large_file(file_path=file_path)
+    #for line in json_log.read_large_file(r'C:\WorkPlace\files\1.txt'):
+        #logger.info(f"{line}")
+    for line in json_log.read_large_file_chunked(file_path=r'C:\WorkPlace\files\1.txt', chunk_size=3):
+        logger.info(f"{line}")
 
-    for i in range(1000):
-        await json_log.write_json_async(file_path='json_log.json', data_list=batch, append=True, indent=None)
         await asyncio.sleep(2)
+
+
 
 async def main():
     # инициализируем основное логирование
@@ -46,7 +54,7 @@ async def main():
 
     for i in range (1,2):
         #result = await test_ClassHttp(logger=logger)
-        await test_ClassFiles()
+        await test_ClassFiles(logger=logger)
         #logger.info(f"data {result}")
         logger.info(f"Спим {i} секунд!")
         await asyncio.sleep(i)

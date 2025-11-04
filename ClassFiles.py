@@ -56,7 +56,7 @@ class Files:
                 await f.write(f"{filename}\n")
 
 '''Готовы функции:
-new_dir_exists, write_json_async
+new_dir_exists, write_json_async, read_large_file, read_large_file_chunked
 _resolve_path, _log_info'''
 class FileManager:
     """Универсальный класс для безопасной работы с файлами и логированием"""
@@ -65,7 +65,7 @@ class FileManager:
         project_root = Path(__file__).resolve().parent
         self.base_dir = Path(base_dir) if base_dir else project_root / "files"
         self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logging.getLogger(__name__)
 
     def new_dir_exists(self, path: Path) -> None:
         """Создает директорию, если её нет"""
@@ -91,7 +91,7 @@ class FileManager:
                 async with aiofiles.open(path, mode, encoding=encoding) as f:
                     lines = (json.dumps(item, ensure_ascii=False , indent=indent) + "\n" for item in data_list)
                     await f.writelines(lines)
-                self.logger.info(f"Добавлено {len(data_list)} записей в {path}")
+                self._log_info(f"Добавлено {len(data_list)} записей в {path}")
                 return True
             except Exception as e:
                 self._log_error(f"Ошибка при асинхронной записи JSON в {path}: {e}")
@@ -99,7 +99,7 @@ class FileManager:
 
     #  Чтение большого файла как итератора
 
-    def read_large_file(self, file_path: Union[str, Path], encoding: str = "utf-8") -> Generator[str, None, None]:
+    def read_large_file(self, file_path: str | Path, encoding: str = "utf-8") -> Generator[str, None, None]:
         """
         Безопасно читает большой файл построчно (генератор).
         Пример:
@@ -107,62 +107,74 @@ class FileManager:
                 process(line)
         """
         path = self._resolve_path(file_path)
-        if not path.exists():
-            self._log_error(f"Файл {path} не найден.")
+        if not path.exists() or not path.is_file():
+            self._log_error(f"Файл {path} не найден или это не файл.")
+            yield from ()  # Возвращаем пустой генератор
             return
+
         try:
+            self._log_info(f"Открытие файла для построчного чтения: {path}")
             with open(path, "r", encoding=encoding) as f:
-                for line in f:
+                for i, line in enumerate(f, start=1):
                     yield line.rstrip("\n")
+
+                # Можно добавить отладочную информацию о количестве строк
+                self._log_info(f"Файл {path} успешно прочитан, всего строк: {i}")
         except Exception as e:
             self._log_error(f"Ошибка при чтении большого файла {path}: {e}")
+            yield from ()
 
-    def read_large_file_chunked(self,
-                                file_path: str | Path,
-                                chunk_size: int = 10000,
-                                encoding: str = "utf-8",
-                                show_progress: bool = False
-                                ) -> Generator[List[str], None, None]:
-        """Читает большой файл чанками (порциями строк) с прогресс-баром."""
+    def read_large_file_chunked(
+            self,
+            file_path: str | Path,
+            chunk_size: int = 10_000,
+            encoding: str = "utf-8",
+    ) -> Generator[list[str], None, None]:
+        """
+        Читает большой файл чанками (пакетами строк) с прогрессом.
+        Пример:
+            for chunk in fm.read_large_file_chunked("big.log", chunk_size=5000):
+                process(chunk)
+        """
         path = self._resolve_path(file_path)
-        if not path.exists():
-            self.logger.error(f"Файл {path} не найден.")
+
+        if not path.exists() or not path.is_file():
+            self._log_error(f"Файл {path} не найден или это не файл.")
+            yield from ()
             return
 
         try:
-            # Подсчет общего количества строк
-            total_lines = 0
-            if show_progress:
-                self.logger.info("Подсчет общего количества строк...")
-                with open(path, "r", encoding=encoding) as f:
-                    total_lines = sum(1 for _ in f)
-                self.logger.info(f"Всего строк в файле: {total_lines}")
+            self._log_info(f"Подсчёт строк в файле: {path}")
+            with open(path, "r", encoding=encoding) as f:
+                total_lines = sum(1 for _ in f)
+            self._log_info(f"Всего строк в файле: {total_lines}")
 
-            chunk = []
+            self._log_info(f"Начато чтение файла чанками: {path} (chunk_size={chunk_size})")
+
             processed_lines = 0
+            chunk: list[str] = []
 
             with open(path, "r", encoding=encoding) as f:
-                for line_num, line in enumerate(f, 1):
+                for line in f:
                     chunk.append(line.rstrip("\n"))
-                    processed_lines = line_num
+                    processed_lines += 1
 
                     if len(chunk) >= chunk_size:
-                        if show_progress:
-                            self.logger.info(f"Обработано: {processed_lines}/{total_lines} строк ({processed_lines / total_lines * 100:.1f}%)")
+                        percent = processed_lines / total_lines * 100
+                        self._log_info(f"Прогресс: {processed_lines}/{total_lines} строк ({percent:.1f}%)")
                         yield chunk
                         chunk = []
 
-                # Последний чанк
+                # оставшиеся строки
                 if chunk:
-                    if show_progress:
-                        self.logger.info(f"Обработано: {processed_lines}/{total_lines} строк (100%)")
+                    self._log_info(f"Прогресс: {processed_lines}/{total_lines} строк (100%)")
                     yield chunk
 
-            if show_progress:
-                self.logger.info("Чтение файла завершено!")
+            self._log_info(f"Чтение файла {path.name} завершено успешно.")
 
         except Exception as e:
-            self.logger.exception(f"Ошибка при чтении большого файла {path}: {e}")
+            self._log_error(f"Ошибка при чтении файла {path}: {e}")
+            yield from ()
 
 
     # -------------------------------------------------------
