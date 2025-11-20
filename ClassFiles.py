@@ -67,6 +67,18 @@ class FileManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
 
+    #  Вспомогательные методы
+    def _resolve_path(self, file_path: Union[str, Path]) -> Path:
+        """Возвращает абсолютный путь"""
+        p = Path(file_path)
+        return p if p.is_absolute() else self.base_dir / p
+
+    def _log_info(self, message: str) -> None:
+        self.logger.info(f"FileManager - {message}")
+
+    def _log_error(self, message: str) -> None:
+        self.logger.error(f"FileManager - {message}")
+
     def new_dir_exists(self, path: Path) -> None:
         """Создает директорию, если её нет"""
         try:
@@ -83,25 +95,25 @@ class FileManager:
             indent отступы задать числом (None - в строку
             append - добавять в файл или перезаписываться
         """
-        path = self._resolve_path(file_path) # получаем абсолютный путь
-        self.new_dir_exists(path)   # создаем директорию
+        path_file = self._resolve_path(file_path) # получаем абсолютный путь
+        self.new_dir_exists(path_file)   # создаем директорию
         async with self._json_lock:
             try:
                 mode = "a" if append else "w"
-                async with aiofiles.open(path, mode, encoding=encoding) as f:
+                async with aiofiles.open(path_file, mode, encoding=encoding) as f:
                     lines = (json.dumps(item, ensure_ascii=False , indent=indent) + "\n" for item in data_list)
                     await f.writelines(lines)
-                self._log_info(f"Добавлено {len(data_list)} записей в {path}")
+                self._log_info(f"Добавлено {len(data_list)} записей в {path_file}")
                 return True
             except Exception as e:
-                self._log_error(f"Ошибка при асинхронной записи JSON в {path}: {e}")
+                self._log_error(f"Ошибка при асинхронной записи JSON в {path_file}: {e}")
                 return False
 
     #  Чтение большого файла как итератора
 
     def read_large_file(self, file_path: str | Path, encoding: str = "utf-8") -> Generator[str, None, None]:
         """
-        Безопасно читает большой файл построчно (генератор).
+        Безопасно читает большой файл ПОСТРОЧНО (генератор).
         Пример:
             for line in fm.read_large_file("big.log"):
                 process(line)
@@ -131,7 +143,7 @@ class FileManager:
             encoding: str = "utf-8",
     ) -> Generator[list[str], None, None]:
         """
-        Читает большой файл чанками (пакетами строк) с прогрессом.
+        Читает большой файл ЧАНКАМИ (пакетами строк) с прогрессом.
         Пример:
             for chunk in fm.read_large_file_chunked("big.log", chunk_size=5000):
                 process(chunk)
@@ -177,13 +189,15 @@ class FileManager:
             yield from ()
 
 
-    # -------------------------------------------------------
+
+
     #  Запись строк в TXT
     # -------------------------------------------------------
-    def write_lines(self, file_path: Union[str, Path], lines: List[str], encoding: str = "utf-8") -> bool:
+    def write_lines(self, file_path: Union[str, Path], lines: List[str], mode = 'w') -> bool:
         """Записывает список строк построчно в txt-файл"""
         path = self._resolve_path(file_path)
         self.new_dir_exists(path)
+        encoding: str = "utf-8"
         try:
             with open(path, "w", encoding=encoding) as f:
                 for line in lines:
@@ -193,22 +207,8 @@ class FileManager:
         except Exception as e:
             self._log_error(f"Ошибка при записи в {path}: {e}")
             return False
-    # -------------------------------------------------------
-    #  Добавление строк в файл
-    # -------------------------------------------------------
-    def append_lines(self, file_path: Union[str, Path], lines: List[str], encoding: str = "utf-8") -> bool:
-        """Добавляет строки в конец файла"""
-        path = self._resolve_path(file_path)
-        self.new_dir_exists(path)
-        try:
-            with open(path, "a", encoding=encoding) as f:
-                for line in lines:
-                    f.write(f"{line}\n")
-            self._log_info(f"Добавлено {len(lines)} строк в {path}.")
-            return True
-        except Exception as e:
-            self._log_error(f"Ошибка при добавлении строк в {path}: {e}")
-            return False
+
+
     # -------------------------------------------------------
     #  Запись в JSON
     # -------------------------------------------------------
@@ -262,20 +262,51 @@ class FileManager:
             self._log_error(f"Ошибка при асинхронном чтении JSON из {path}: {e}")
             return None
 
+    def remove_duplicates_large_file(self, input_file: str, output_file=None, buffer_size=10000):
+        """Удаление дубликатов из очень больших файлов - построчная обработка с буферизацией"""
+
+        input_file = Path(os.path.join(r"C:\Users\beginin-ov\Projects\Local\files\results", input_file))
+
+        # Автоматически формируем output_file если не передан
+        if output_file is None:
+            output_file = input_file.parent / f"{input_file.stem}_d.txt"
+        else:
+            output_file = Path(output_file)
+
+        try:
+            seen = set()
+            buffer = []
+            cnt = 0
+            with open(input_file, 'r', encoding='utf-8') as f_in, \
+                    open(output_file, 'w', encoding='utf-8') as f_out:
+                self._log_info(f"Файл для обработки: {input_file}!")
+                for line in f_in:
+                    cnt += 1
+                    stripped = line.strip()
+
+                    if stripped not in seen:
+                        seen.add(stripped)
+                        buffer.append(line)
+
+                    # Периодически сбрасываем буфер в файл
+                    if len(buffer) >= buffer_size:
+                        f_out.writelines(buffer)
+                        buffer = []
+
+                # Записываем оставшиеся строки
+                if buffer:
+                    f_out.writelines(buffer)
+
+            self._log_info(f"Обработан большой файл {input_file}!")
+            self._log_info(f"Всего строк: {cnt}")
+            self._log_info(f"Уникальных строк: {len(seen)}")
+            self._log_info(f"Дубликатов: {cnt - len(seen)}")
+
+        except Exception as e:
+            self._log_error(f"Ошибка при удалении дубликатов в файле {input_file}: {e}")
 
 
 
-    #  Вспомогательные методы
-    def _resolve_path(self, file_path: Union[str, Path]) -> Path:
-        """Возвращает абсолютный путь"""
-        p = Path(file_path)
-        return p if p.is_absolute() else self.base_dir / p
-
-    def _log_info(self, message: str) -> None:
-        self.logger.info(f"FileManager - {message}")
-
-    def _log_error(self, message: str) -> None:
-        self.logger.error(f"FileManager - {message}")
 
         #  Запись большого файла построчно (стриминг)
     def write_large_file(
