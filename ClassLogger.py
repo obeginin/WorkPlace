@@ -33,6 +33,18 @@ class JsonFormatter(logging.Formatter):
 
         return json.dumps(log_record, ensure_ascii=False, default=str)
 
+class SmartTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """Ротирует логи в формате app.YYYY-MM-DD.log"""
+    def __init__(self, filename, when="midnight", interval=1, backupCount=30, encoding="utf-8"):
+        base, ext = Path(filename).stem, Path(filename).suffix
+        self.baseFilenameNoExt = str(Path(filename).parent / base)
+        self.ext = ext
+        super().__init__(filename, when=when, interval=interval, backupCount=backupCount, encoding=encoding)
+        self.suffix = "%Y-%m-%d"
+
+    def rotation_filename(self, default_name: str) -> str:
+        date_str = datetime.now().strftime(self.suffix)
+        return f"{self.baseFilenameNoExt}.{date_str}{self.ext}"
 
 class LoggerConfig:
     """Универсальный класс для настройки логирования"""
@@ -87,7 +99,7 @@ class LoggerConfig:
             # Выбираем форматтер
             formatter = JsonFormatter() if self.use_json else logging.Formatter(self.log_format)
             # Файловый обработчик с ротацией
-            file_handler = TimedRotatingFileHandler(
+            file_handler = SmartTimedRotatingFileHandler(
                 filename=str(log_path),
                 when=self.when,
                 interval=self.interval,
