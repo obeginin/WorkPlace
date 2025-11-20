@@ -189,7 +189,7 @@ class AsyncHttpClient:
         start_time = time.perf_counter()
         for attempt in range(self.max_retries + 1):
             try:
-                self.logger.info(f"Request attempt {attempt + 1}: {request.method} {url} | params={request.params} json={request.json} data={request.data}")
+                self.logger.debug(f"Request attempt {attempt + 1}: {request.method} {url} | params={request.params} json={request.json} data={request.data}")
 
                 async with self.session.request(
                         method=request.method,
@@ -216,7 +216,7 @@ class AsyncHttpClient:
                         self.logger.error(f"Unsupported return_type in request: {request}")
                         return ResponseFormat(status=None, data=None,url=url, error=error, execute_time=end_time, used_attempts=attempt)
                     # если успешный ответ или ошибка return_type, выходим
-                    self.logger.info(f"Response received: status={status} content_type={type(content)}")
+                    self.logger.debug(f"Response received: status={status} content_type={type(content)}")
                     break
 
 
@@ -235,7 +235,7 @@ class AsyncHttpClient:
         if error:
             self.logger.error(f"Request failed after {attempt + 1} attempts: {request.method} {url} | Error: {error}")
         else:
-            self.logger.info(f"Request successful: {request.method} {url} | Attempts: {attempt + 1} | Time: {end_time:.3f}s")
+            self.logger.debug(f"Request successful: {request.method} {url} | Attempts: {attempt + 1} | Time: {end_time:.3f}s")
 
         return ResponseFormat(
             status=status if error is None else None,
